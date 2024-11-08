@@ -7,233 +7,160 @@ Github: https://github.com/ohananoshi/C-Matrix
 
 Created in: 09/05/23
 
-Last updated: 14/06/23
+Last updated: 08/nov/24
 
 */
 
 
 //=============================== HEADERS ==============================
-#ifndef EMBEDDED_MODE
-    #pragma once
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <stdint.h>
-    #include <stdarg.h>
-    #include <limits.h>
-    #include <math.h>
-#endif
-#ifdef EMBEDDED_MODE
-    #ifndef _INC_STDIO
-        #include <stdio.h>
-    #endif
-    #ifndef _INC_STDLIB
-        #include <stdlib.h>
-    #endif
-    #ifndef _STDINT_H
-        #include <stdint.h>
-    #endif
-    #ifndef _STDARG_H
-        #include <stdarg.h>
-    #endif
-    #ifndef _GCC_LIMITS_H_
-        #include <limits.h>
-    #endif
-    #ifndef _MATH_H_
-        #include <math.h>
-    #endif
-#endif
 
 #ifndef _C_MATRIX_HEADER_
     #define _C_MATRIX_HEADER_
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <string.h>
+#include <stdbool.h>
+#include <math.h>
+
 //=================================== CONSTANTS ===================================
 
-#define FILLED 1
-#define NOT_FILLED 0 
+enum error_flag{
+    DIVIDE_BY_0,
+    ARRAY_WITH_LENGTH_0,
+    NULL_ARRAY,
+    LENGTH_MISSMATCH,
+    INVALID_PARAMETER
+}error_flag;
+
+enum AXIS{
+    X,Y,Z
+}AXIS;
+
+enum FILL_MODE{
+    BY_ROW,
+    BY_COLUMN
+}FILL_MODE;
 
 //=================================== DATATYPES ===================================
 
-enum iterate_modes{
-    ALL = 0,
-    BY_ROW,
-    BY_COLUMN,
-    BY_SLICE,
-    CUSTOM
-};
-
-enum return_modes{
-    INPLACE = -1,
-    NEW = -2
-};
-
-enum operations{
-    SUM = 0,
-    SUB,
-    MULT,
-    DIVIDE,
-    POWER
-};
-
-enum extract_mode{
-    KEEP_ROWS_SIZE = 0,
-    KEEP_COLUMNS_SIZE,
-    KEEP_SLICES_SIZE,
-    CUT
-};
-
-enum expand_mode{
-    ADD_ROWS = 0,
-    ADD_COLUMNS,
-    ADD_SLICES
-};
-
-typedef struct{
+typedef struct MATRIX_t{
     uint32_t rows;
     uint32_t columns;
-    uint32_t slices;
+    uint32_t layers;
     double ***data;
-}MATRIX;
+}MATRIX_t;
 
-//================================== FUNCTIONS ====================================
-//math functions
-static inline double divide(double x, double y){
-    if(y == 0.000000000000000){
-        fprintf(stderr, "DIVISION BY 0");
-        return 0;
-    }
-    return x/y;
-}
-static inline double sum(double x, double y){
-    return x+y;
-}
-static inline double sub(double x, double y){
-    return x-y;
-}
-static inline double mult(double x, double y){
-    return x*y;
+typedef struct slice_t{
+    uint32_t start;
+    uint32_t end;
+    int32_t step;;
+}slice_t;
+
+//================================== COMMON FUNCTIONS ====================================================
+
+int d_compare(const void *a, const void *b) {
+    return (*((double*)a) > *((double*)b)) ? 1:-1;
 }
 
-//bool functions
-static inline double is_bigger(double x, double y){ return x > y ? 1.0:0.0;}
-static inline double is_smaller(double x, double y){ return x < y ? 1.0:0.0;}
-static inline double is_different(double x, double y){ return x != y ? 1.0:0.0;}
-static inline double is_equal(double x, double y){ return x == y ? 1.0:0.0;}
+//============================= FORMAT FUNCTIONS (FMT) ===============================================
 
-//array functions
-double* arr(uint32_t size, ...){
-    double* buffer = (double*)calloc(size, sizeof(double));
+slice_t* fmt_read(const char* fmt){
+    slice_t *select = (slice_t*)calloc(1, sizeof(slice_t));
+    sscanf(fmt,"[%u:%u:%d]%*s", &select->start, &select->end, &select->step);
+    return select;
+};
 
-    va_list num;
-    va_start(num, size);
-        
-    for(uint32_t i = 0; i < size; i++){
-        buffer[i] = va_arg(num,double);
+int8_t fmt_verify(const char* function_name , const uint32_t src_att, const slice_t* select, const char* att_name){
+
+    if(select->start > src_att){
+        fprintf(stderr, "ERROR:\n\tfunction: %s\n\tparameter: fmt\n\tmessage: START %s MUST BE <= SRC->%sS.\n", function_name, att_name, att_name);
+        return LENGTH_MISSMATCH;
+    }
+    if(select->end > src_att){
+        fprintf(stderr, "ERROR:\n\tfunction: %s\n\tparameter: fmt\n\tmessage: END %s MUST BE <= SRC->%sS.\n", function_name, att_name, att_name);
+        return LENGTH_MISSMATCH;
+    }
+    if(select->step < 0) if((double)(-select->step) > (double)src_att){
+        fprintf(stderr, "ERROR:\n\tfunction: %s\n\tparameter: fmt\n\tmessage: STEP MUST BE <= SRC->%sS.\n", function_name, att_name);
+        return LENGTH_MISSMATCH;
+    }else if((double)select->step > (double)src_att){
+        fprintf(stderr, "ERROR:\n\tfunction: %s\n\tparameter: fmt\n\tmessage: STEP MUST BE <= SRC->%sS.\n", function_name, att_name);
+        return LENGTH_MISSMATCH;
     }
 
-    va_end(num);
-
-    return buffer;
+    return 0;
 }
 
-int* int_arr(uint32_t size, ...){
-    int* buffer = (int*)calloc(size, sizeof(int));
+//=============================== MATRIX FUNCTIONS =============================================
 
-    va_list num;
-    va_start(num, size);
-
-    for(uint32_t i = 0; i < size; i++){
-        buffer[i] = va_arg(num,int);
+void matrix_init(MATRIX_t** dest, uint32_t rows, uint32_t columns, uint32_t layers){
+    
+    if(rows == 0){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_init\n\tparameter: rows\n\tmessage: rows cannot be 0.\n");
+        exit(LENGTH_MISSMATCH);
     }
-
-    va_end(num);
-
-    return buffer;
-}
-
-int32_t* int_a_b(int32_t start, int32_t end, int32_t step){
-    if(step == 0){
-        fprintf(stderr,"ERROR: DIVISION BY ZERO");
-        return NULL;
+    if(columns == 0){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_init\n\tparameter: columns\n\tmessage: columns cannot be 0.\n");
+        exit(LENGTH_MISSMATCH);
     }
-    uint32_t size = ((end-start+1)/step) + 1;
-    int32_t *buffer = (int32_t*)calloc(size, sizeof(int32_t));
-
-    for(int32_t i = 0; i < size; i++){
-        buffer[i] = start + i*step;
+    if(layers == 0){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_init\n\tparameter: layers\n\tmessage: layers cannot be 0.\n");
+        exit(LENGTH_MISSMATCH);
     }
+    
+    (*dest) = (MATRIX_t*)calloc(1,sizeof(MATRIX_t));
+    (*dest)->columns = columns;
+    (*dest)->rows = rows;
+    (*dest)->layers = layers;
+    (*dest)->data = (double***)calloc(layers, sizeof(double**));
 
-    return buffer;
-}
-
-double* double_linspace(double start, double end, uint32_t size){
-    if(size == 0){
-        fprintf(stderr,"ERROR: ARRAY LENGTH CAN'T BE ZERO");
-        return NULL;
-    }
-
-    double *buffer = (double*)calloc(size, sizeof(double));
-    if(size == 1){
-        buffer[0] = start;
-        return buffer;
-    }
-
-    double step = (end - start)/((double)(size - 1));
-
-    printf("\n%d \n", size);
-    for(int32_t i = 0; i < size; i++){
-        buffer[i] = start + ((double)i)*step;
-    }
-
-    return buffer;
-}
-
-double array_dot(const double* a, const double* b, uint32_t size){
-    if(size == 0){
-        fprintf(stderr,"ERROR: ARRAY LENGTH CAN'T BE ZERO");
-        return NAN;
-    }
-    double result = 0.0;
-
-    for(uint32_t i = 0; i < size; i++){
-        result += a[i]*b[i];
-    }
-
-    return result;
-}
-
-//matrix functions
-void matrix_free(MATRIX *matrix){
-    if(matrix == NULL) return;
-
-    for(uint32_t i = 0; i < matrix->slices; i++){
-        for(uint32_t j = 0; j < matrix->rows; j++){
-            free(matrix->data[i][j]);
+    for(uint32_t i = 0; i < layers; i++){
+        (*dest)->data[i] = (double**)calloc(rows, sizeof(double*));
+        for(uint32_t j = 0; j < rows; j++){
+            (*dest)->data[i][j] = (double*)calloc(columns, sizeof(double*));
         }
-        free(matrix->data[i]);
     }
-    free(matrix->data);
-    free(matrix);
+}
+
+void matrix_free(MATRIX_t** matrix){
+    if(matrix == NULL || *matrix == NULL) return;
+
+    if((*matrix)->data != NULL){
+        for(uint32_t i = 0; i < (*matrix)->layers; i++){
+            for(uint32_t j = 0; j < (*matrix)->rows; j++){
+                free((*matrix)->data[i][j]);
+            }
+            free((*matrix)->data[i]);
+        }
+        free((*matrix)->data);
+    }
+    
+    free((*matrix));
 
     matrix = NULL;
 }
 
 void matrix_vfree(uint32_t count, ...){
-    va_list matrix;
-    va_start(matrix, count);
+    va_list arg;
+    va_start(arg, count);
 
     for(uint32_t i = 0; i < count; i++){
-        matrix_free(va_arg(matrix,MATRIX*));
+        matrix_free(va_arg(arg, MATRIX_t**));
     }
+
+    va_end(arg);
 }
 
-void matrix_print(const MATRIX a){
+void matrix_print(const MATRIX_t* src){
 
-    for(uint32_t i = 0; i < a.slices; i++){
-        printf("slice: %d\n", i);
-        for(uint32_t j = 0; j < a.rows; j++){
-            //printf("linha %d\n",j);
-            for(uint32_t k = 0; k < a.columns; k++){
-                printf("%f ", a.data[i][j][k]);
+    for(uint32_t i = 0; i < src->layers; i++){
+        printf("layer: %d\n", i);
+        for(uint32_t j = 0; j < src->rows; j++){
+            for(uint32_t k = 0; k < src->columns; k++){
+                printf("%lf ", src->data[i][j][k]);
             }
             printf("\n");
         }
@@ -242,821 +169,469 @@ void matrix_print(const MATRIX a){
 
 }
 
-void matrix_info(const MATRIX matrix){
-    printf("SLICES: %d\nROWS: %d\nCOLUMNS: %d\n", matrix.slices, matrix.rows, matrix.columns);
+void matrix_info(const MATRIX_t* src){
+    printf("LAYERS: %d\nROWS: %d\nCOLUMNS: %d\nSIZE: %lu bytes\n", src->layers, src->rows, src->columns, src->layers * src->rows * src->columns * sizeof(double));
 }
 
-MATRIX* matrix_init(uint32_t rows, uint32_t columns, uint32_t slices, uint8_t filled, ...){
-    MATRIX* matrix = (MATRIX*)calloc(1,sizeof(MATRIX));
-    matrix->columns = columns;
-    matrix->rows = rows;
-    matrix->slices = slices;
-    matrix->data = (double***)calloc(slices, sizeof(double**));
+void matrix_fill(MATRIX_t** dest, double x, const char* layer_fmt, const char* rows_fmt, const char* columns_fmt){
     
-    if(filled){
-        va_list array;
-        va_start(array, filled);
-        double* buffer = va_arg(array, double*);
-        va_end(array);
+    if((*dest) == NULL || dest == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_fill\n\tparameter: dest\n\tmessage: dest CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
+    } 
 
-        for(uint32_t i = 0, count = 0; i < slices; i++){
-            matrix->data[i] = (double**)calloc(rows, sizeof(double*));
-            for(uint32_t j = 0; j < rows; j++){
-                matrix->data[i][j] = (double*)calloc(columns, sizeof(double));
-                for(uint32_t k = 0; k < columns; k++, count++){
-                    matrix->data[i][j][k] = buffer[count];
+    slice_t *l_slice = (slice_t*)calloc(1, sizeof(slice_t));
+    slice_t *r_slice = (slice_t*)calloc(1, sizeof(slice_t));
+    slice_t *c_slice = (slice_t*)calloc(1, sizeof(slice_t));
+
+    if(layer_fmt == NULL){
+        l_slice->start = 0;
+        l_slice->end = (*dest)->layers;
+        l_slice->step = 1;
+    }else l_slice = fmt_read(layer_fmt);
+
+    if(fmt_verify("matrix_fill", (*dest)->layers, l_slice, "LAYER")){
+        free(l_slice);  
+        free(r_slice);  
+        free(c_slice); 
+        exit(LENGTH_MISSMATCH);
+    }
+
+    if(rows_fmt == NULL){
+        r_slice->start = 0;
+        r_slice->end = (*dest)->rows;
+        r_slice->step = 1;
+    }else r_slice = fmt_read(rows_fmt);
+
+    if(fmt_verify("matrix_fill", (*dest)->rows, r_slice, "ROW")){
+        free(l_slice);  
+        free(r_slice);  
+        free(c_slice); 
+        exit(LENGTH_MISSMATCH);
+    }
+
+    if(columns_fmt == NULL){
+        c_slice->start = 0;
+        c_slice->end = (*dest)->columns;
+        c_slice->step = 1;
+    }else c_slice = fmt_read(columns_fmt);
+
+    if(fmt_verify("matrix_fill", (*dest)->columns, c_slice, "COLUMN")){
+        free(l_slice);  
+        free(r_slice);  
+        free(c_slice); 
+        exit(LENGTH_MISSMATCH);
+    }
+
+    for(uint32_t i = l_slice->start; i < l_slice->end; i += l_slice->step){
+        for(uint32_t j = r_slice->start; j < r_slice->end; j += r_slice->step){
+            for(uint32_t k = c_slice->start; k < c_slice->end; k += c_slice->step){
+                (*dest)->data[i][j][k] = x;
+            }
+        }
+    } 
+
+    free(l_slice);  
+    free(r_slice);  
+    free(c_slice); 
+}
+
+void matrix_rotate(MATRIX_t** src, enum AXIS axis, const char* axis_fmt){
+    if((*src) == NULL || src == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_rotate\n\tparameter: src\n\tmessage: SRC CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
+    } 
+
+    slice_t *ax_slice = NULL;
+    slice_t *ax_slice2 = NULL;
+
+    double tmp;
+
+    switch (axis)
+    {
+    case X:
+    {   
+        ax_slice = (slice_t*)calloc(1, sizeof(slice_t));
+
+        if(axis_fmt == NULL){
+            ax_slice->start = 0;
+            ax_slice->end = (*src)->columns;
+            ax_slice->step = 1;
+        }else{
+            ax_slice = fmt_read(axis_fmt);
+            if(fmt_verify("matrix_verify", (*src)->columns, ax_slice, "COLUMN")) exit(LENGTH_MISSMATCH);
+        }
+
+        for(uint32_t i = 0; i < (*src)->layers; i++){
+            for(uint32_t k = ax_slice->start; k < ax_slice->end; k += ax_slice->step){
+                for(uint32_t j = 0; j < (*src)->rows/2; j++){
+                    tmp = (*src)->data[i][j][k];
+                    (*src)->data[i][j][k] = (*src)->data[i][(*src)->rows - j - 1][k];
+                    (*src)->data[i][(*src)->rows - j - 1][k] = tmp;
                 }
             }
         }
-        free(buffer);
 
-        return matrix;
+        free(ax_slice);
     }
+    break;
+    case Y:
+    {   
+        ax_slice = (slice_t*)calloc(1, sizeof(slice_t));
 
-    for(uint32_t i = 0; i < slices; i++){
-        matrix->data[i] = (double**)calloc(rows, sizeof(double*));
-        for(uint32_t j = 0; j < rows; j++){
-            matrix->data[i][j] = (double*)calloc(columns, sizeof(double));
+        if(axis_fmt == NULL){
+            ax_slice->start = 0;
+            ax_slice->end = (*src)->rows;
+            ax_slice->step = 1;
+        }else{
+            ax_slice = fmt_read(axis_fmt);
+            if(fmt_verify("matrix_verify", (*src)->columns, ax_slice, "ROW")) exit(LENGTH_MISSMATCH);
         }
-    }
 
-    return matrix;
-}
-
-MATRIX* matrix_ones(uint32_t rows, uint32_t columns, uint32_t slices){
-    MATRIX *ones = matrix_init(rows, columns, slices, NOT_FILLED);
-
-    for(uint32_t i = 0; i < slices; i++){
-        for(uint32_t j = 0; j < rows; j++){
-            for(uint32_t k = 0; k < columns; k++){
-                ones->data[i][j][k] = 1.0;
+        for(uint32_t i = 0; i < (*src)->layers; i++){
+            for(uint32_t j = ax_slice->start; j < ax_slice->end; j += ax_slice->step){
+                for(uint32_t k = 0; k < (*src)->columns/2; k++){
+                    tmp = (*src)->data[i][j][k];
+                    (*src)->data[i][j][k] = (*src)->data[i][j][(*src)->columns - k - 1];
+                    (*src)->data[i][j][(*src)->columns - k - 1] = tmp;
+                }
             }
         }
+
+        free(ax_slice);
     }
+    break;
+    case Z:
+    {   
+        ax_slice = (slice_t*)calloc(1, sizeof(slice_t));
+        ax_slice2 = (slice_t*)calloc(1, sizeof(slice_t));
 
-    return ones;
-}
+        if(axis_fmt == NULL){
+            ax_slice->start = 0;
+            ax_slice->end = (*src)->rows;
+            ax_slice->step = 1;
 
-void matrix_transfer(const MATRIX a, MATRIX *b){
+            ax_slice2->start = 0;
+            ax_slice2->end = (*src)->columns;
+            ax_slice2->step = 1;
+        }else{
+            ax_slice = fmt_read(axis_fmt);
+            ax_slice2 = fmt_read(strchr(axis_fmt, ','));
+            if(fmt_verify("matrix_verify", (*src)->columns, ax_slice2, "COLUMN")) exit(LENGTH_MISSMATCH);
+            if(fmt_verify("matrix_verify", (*src)->rows, ax_slice, "ROW")) exit(LENGTH_MISSMATCH);
+        }
 
-    for(uint32_t i = 0; i < a.slices; i++){
-        for(uint32_t j = 0; j < a.rows; j++){
-            for(uint32_t k = 0; k < a.columns; k++){
-                b->data[i][j][k] = a.data[i][j][k];
+        for(uint32_t i = 0; i < (*src)->layers/2; i++){
+            for(uint32_t j = ax_slice->start; j < ax_slice->end; j += ax_slice->step){
+                for(uint32_t k = ax_slice2->start; k < ax_slice2->end; k += ax_slice2->step){
+                    tmp = (*src)->data[i][j][k];
+                    (*src)->data[i][j][k] = (*src)->data[(*src)->layers - i - 1][j][k];
+                    (*src)->data[(*src)->layers - i - 1][j][k] = tmp;
+                }
             }
         }
+
+        free(ax_slice);
+        free(ax_slice2);
     }
-}
-
-MATRIX* matrix_copy(const MATRIX input_matrix){
-    MATRIX* copy = matrix_init(input_matrix.rows, input_matrix.columns, input_matrix.slices, NOT_FILLED);
-
-    for(uint32_t i = 0; i < copy->slices; i++){
-        for(uint32_t j = 0; j < copy->rows; j++){
-            for(uint32_t k = 0; k < copy->columns; k++){
-                copy->data[i][j][k] = input_matrix.data[i][j][k];
-            }
-        }
-    }
-
-    return copy;
-}
-
-MATRIX* matrix_transpose(MATRIX** input_matrix, int8_t return_mode, uint8_t iterate_mode,...){
+    break;
     
-    if(iterate_mode == ALL){
-        MATRIX *transpose = matrix_init((*input_matrix)->columns, (*input_matrix)->rows, (*input_matrix)->slices, NOT_FILLED);
-
-        for(uint32_t i = 0; i < (*input_matrix)->slices; i++){
-            for(uint32_t j = 0; j < (*input_matrix)->rows; j++){
-                for(uint32_t k = 0; k < (*input_matrix)->columns; k++){
-                    transpose->data[i][k][j] = (*input_matrix)->data[i][j][k];
-                }
-            }
-        }
-
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return transpose;
-    }
-    if(iterate_mode == CUSTOM){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int count = va_arg(info, int);
-        if(count > (*input_matrix)->slices){
-            fprintf(stderr, "ERROR: INCOMPATIBLE NUMBER OF SLICES.");
-            return NULL;
-        }
-
-        int* slices = va_arg(info, int*);
-        va_end(info);
-
-        MATRIX *transpose = matrix_init((*input_matrix)->columns, (*input_matrix)->rows, count, NOT_FILLED);
-
-        for(uint16_t i = 0; i < count; i++){
-            for(uint32_t i = 0; i < (*input_matrix)->rows; i++){
-                for(uint32_t j = 0; j < (*input_matrix)->columns; j++){
-                    if(slices[i] > (*input_matrix)->slices){
-                        fprintf(stderr, "ERROR: SLICE NUMBER DOESN'T EXIST.");
-                        return NULL;
-                    }
-                    transpose->data[slices[i]][j][i] = (*input_matrix)->data[slices[i]][i][j];
-                }
-            }
-        }
-
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return transpose;
+    default:
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_rotate\n\tparameter: axis\n\tmessage: axis %hu is invalid.\n", axis);
+        exit(INVALID_PARAMETER);
+        break;
     }
 
-    fprintf(stderr,"ERROR: ITERATE MODE DOESN'T EXIST.");
-    return NULL;
 }
 
-MATRIX* matrix_reshape(MATRIX** input_matrix, uint32_t new_rows, uint32_t new_columns, uint32_t new_slices, int8_t return_mode){
-    if((new_rows*new_columns*new_slices) != (((*input_matrix)->columns) * ((*input_matrix)->rows) * ((*input_matrix)->slices))){
-        fprintf(stderr,"MATRIX RESHAPE DIMENSIONS NOT MATCH");
-        return NULL;
+void matrix_copy(const MATRIX_t* src, MATRIX_t** dest, const char* layer_fmt, const char* row_fmt, const char* column_fmt, bool same_shape){
+
+    if(src == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_copy\n\tparameter: src\n\tmessage: SRC CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
     }
 
-    MATRIX* reshaped = matrix_init(new_rows, new_columns, new_slices, NOT_FILLED);
+    slice_t *l_slice = (slice_t*)calloc(1, sizeof(slice_t));
+    slice_t *r_slice = (slice_t*)calloc(1, sizeof(slice_t));
+    slice_t *c_slice = (slice_t*)calloc(1, sizeof(slice_t));
     
-    for (uint32_t k = 0; k < (*input_matrix)->slices; k++) {
-        for (uint32_t i = 0; i < (*input_matrix)->columns; i++) {
-            for (uint32_t j = 0; j < (*input_matrix)->rows; j++) {
-                uint32_t index = k * ((*input_matrix)->rows * (*input_matrix)->columns) + i * (*input_matrix)->rows + j;
-                uint32_t new_k = index / (new_rows * new_columns);
-                uint32_t new_i = (index % (new_rows * new_columns)) / new_rows;
-                uint32_t new_j = (index % (new_rows * new_columns)) % new_rows;
+    if(layer_fmt == NULL){
+        l_slice = (slice_t*)calloc(1, sizeof(slice_t));
 
-                reshaped->data[new_k][new_j][new_i] = (*input_matrix)->data[k][j][i];
+        l_slice->start = 0;
+        l_slice->end = src->layers;
+        l_slice->step = 1;
+    }else l_slice = fmt_read(layer_fmt);
+
+    if(fmt_verify("matrix_fill", src->layers, l_slice, "LAYER")){
+        free(l_slice);  
+        free(r_slice); 
+        free(c_slice);  
+        exit(LENGTH_MISSMATCH);
+    }
+
+    if(row_fmt == NULL){
+        r_slice = (slice_t*)calloc(1, sizeof(slice_t));
+
+        r_slice->start = 0;
+        r_slice->end = src->rows;
+        r_slice->step = 1;
+    }else r_slice = fmt_read(row_fmt);
+
+    if(fmt_verify("matrix_fill", src->rows, r_slice, "ROW")){
+        free(l_slice);  
+        free(r_slice); 
+        free(c_slice);   
+        exit(LENGTH_MISSMATCH);
+    }
+
+    if(column_fmt == NULL){
+        c_slice = (slice_t*)calloc(1, sizeof(slice_t));
+
+        c_slice->start = 0;
+        c_slice->end = src->columns;
+        c_slice->step = 1;
+    }else c_slice = fmt_read(column_fmt);
+
+    if(fmt_verify("matrix_fill", src->columns, c_slice, "COLUMN")){
+        free(l_slice);  
+        free(r_slice); 
+        free(c_slice); 
+        exit(LENGTH_MISSMATCH);
+    }
+
+    if(same_shape){
+        if(dest == NULL || (*dest) == NULL) matrix_init(dest, src->rows, src->columns, src->layers);
+
+        for(uint32_t i = l_slice->start; i < l_slice->end; i += l_slice->step){
+            for(uint32_t j = r_slice->start; j < r_slice->end; j += r_slice->step){
+                for(uint32_t k = c_slice->start; k < c_slice->end; k += c_slice->step){
+                    (*dest)->data[i][j][k] = src->data[i][j][k];
+                }
+            }
+        }
+    }else{
+        if(dest == NULL || (*dest) == NULL){
+            matrix_init(dest, ((r_slice->end - r_slice->start - 1)/r_slice->step)+1, ((c_slice->end - c_slice->start - 1)/c_slice->step)+1, ((l_slice->end - l_slice->start - 1)/l_slice->step)+1);
+        }
+
+        for(uint32_t i = l_slice->start, i2 = 0; i < l_slice->end; i += l_slice->step, i2++){
+            for(uint32_t j = r_slice->start, j2 = 0; j < r_slice->end; j += r_slice->step, j2++){
+                for(uint32_t k = c_slice->start, k2 = 0; k < c_slice->end; k += c_slice->step, k2++){
+                    (*dest)->data[i2][j2][k2] = src->data[i][j][k];
+                }
             }
         }
     }
 
-    if(return_mode == INPLACE) matrix_free(*input_matrix);
-
-    return reshaped;
+    free(l_slice);  
+    free(r_slice);  
+    free(c_slice); 
 }
 
-MATRIX* matrix_expand(MATRIX** input_matrix, uint8_t expand_mode, uint16_t count, int8_t return_mode){
-    if(expand_mode == ADD_COLUMNS){
-        if((count + (*input_matrix)->columns) > UINT32_MAX){
-            fprintf(stderr, "EXPANSION EXCEED MATRIX COLUMNS LENGTH LIMIT.");
-            return NULL;
-        }
-
-        MATRIX* expanded = matrix_init((*input_matrix)->rows, (*input_matrix)->columns + count, (*input_matrix)->slices, NOT_FILLED);
-        matrix_transfer(*(*input_matrix), expanded);
-
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return expanded;
-    }
-    if(expand_mode == ADD_ROWS){
-        if((count + (*input_matrix)->rows) > UINT32_MAX){
-            fprintf(stderr, "EXPANSION EXCEED MATRIX ROWS LENGTH LIMIT.");
-            return NULL;
-        }
-
-        MATRIX* expanded = matrix_init((*input_matrix)->rows + count, (*input_matrix)->columns, (*input_matrix)->slices, NOT_FILLED);
-        matrix_transfer(*(*input_matrix), expanded);
-
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return expanded; 
-    }
-    if(expand_mode == ADD_SLICES){
-        if((count + (*input_matrix)->slices) > UINT32_MAX){
-            fprintf(stderr, "EXPANSION EXCEED MATRIX SLICES LENGTH LIMIT.");
-            return NULL;
-        }
-
-        MATRIX* expanded = matrix_init((*input_matrix)->rows, (*input_matrix)->columns, (*input_matrix)->slices + count, NOT_FILLED);
-        matrix_transfer(*(*input_matrix), expanded);
-
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return expanded;
+void matrix_reshape(const MATRIX_t* src, MATRIX_t** dest,uint32_t new_rows, uint32_t new_columns, uint32_t new_layers, enum FILL_MODE fill_mode){
+    if(src == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_reshape\n\tparameter: src\n\tmessage: SRC CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
     }
     
-    fprintf(stderr, "ERROR: EXPAND MODE DOESN'T EXIST.");
-    return NULL;
+    if((new_rows*new_columns*new_layers) != ((src->columns) * (src->rows) * (src->layers))){
+        fprintf(stderr,"ERROR:\n\tfunction: matrix_reshape\n\tparamter: new_rows | new_columns | new_layers\n\tmessage: MATRIX RESHAPE DIMENSIONS NOT MATCH");
+        exit(LENGTH_MISSMATCH);
+    }
+
+    matrix_init(dest, new_rows, new_columns, new_layers);
+    uint32_t idx_destino = 0;
+    
+    switch(fill_mode){
+    
+        case BY_COLUMN:
+            for (uint32_t k = 0; k < src->layers; k++) {
+                for (uint32_t i = 0; i < src->columns; i++) {
+                    for (uint32_t j = 0; j < src->rows; j++) {
+                        uint32_t index = k * (src->rows * src->columns) + i * src->rows + j;
+                        uint32_t new_k = index / (new_rows * new_columns);
+                        uint32_t new_i = (index % (new_rows * new_columns)) / new_rows;
+                        uint32_t new_j = (index % (new_rows * new_columns)) % new_rows;
+
+                        (*dest)->data[new_k][new_j][new_i] = src->data[k][j][i];
+                    }
+                }
+            }
+            break;
+        case BY_ROW:
+
+            for (uint32_t i = 0; i < src->layers; i++) {
+                for (uint32_t j = 0; j < src->rows; j++) {
+                    for (uint32_t k = 0; k < src->columns; k++) {
+                        uint32_t linha_destino = idx_destino / (new_rows * new_columns);
+                        uint32_t coluna_destino = (idx_destino / new_columns) % new_rows;
+                        uint32_t profundidade_destino = idx_destino % new_columns;
+
+                        (*dest)->data[linha_destino][coluna_destino][profundidade_destino] = src->data[i][j][k];
+                        idx_destino++;
+                    }
+                }
+            }
+
+            break;
+
+        default:
+            fprintf(stderr, "ERROR:\n\tfunction: matrix_reshape\n\tparameter: fill_mode\n\tmessage: fill_mode %hu does not exist.\n", fill_mode);
+            exit(INVALID_PARAMETER);
+    }
+    
 }
 
-MATRIX* matrix_pop(MATRIX** input_matrix, int8_t return_mode, uint8_t extract_mode, uint8_t iterate_mode, ...){
-
-    if(iterate_mode == BY_ROW){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int size = va_arg(info, int);
-        int* rows = va_arg(info, int*);
-        va_end(info);
-
-        MATRIX *filtered = matrix_init(size, (*input_matrix)->columns, (*input_matrix)->slices, NOT_FILLED);
-
-        for(uint32_t i = 0; i < filtered->slices; i++){
-            for(uint32_t j = 0; j < size; j++){
-                for(uint32_t k = 0; k < filtered->columns; k++){
-                    filtered->data[i][j][k] = (*input_matrix)->data[i][rows[j]][k];
-                }
-            }
-        }
-
-        free(rows);
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return filtered;
-    }
-    if(iterate_mode == BY_COLUMN){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int size = va_arg(info, int);
-        int* columns = va_arg(info, int*);
-        va_end(info);
-
-        MATRIX *filtered = matrix_init((*input_matrix)->rows, size, (*input_matrix)->slices, NOT_FILLED);
-
-        for(uint32_t i = 0; i < filtered->slices; i++){
-            for(uint32_t j = 0; j < filtered->rows; j++){
-                for(uint32_t k = 0; k < size; k++){
-                    filtered->data[i][j][k] = (*input_matrix)->data[i][j][columns[k]];
-                }
-            }
-        }
-
-        free(columns);
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return filtered;
-    }
-    if(iterate_mode == BY_SLICE){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int size = va_arg(info, int);
-        int* slices = va_arg(info, int*);
-        va_end(info);
-
-        MATRIX *filtered = matrix_init((*input_matrix)->rows, (*input_matrix)->columns, size, NOT_FILLED);
-
-        for(uint32_t i = 0; i < size; i++){
-            for(uint32_t j = 0; j < filtered->rows; j++){
-                for(uint32_t k = 0; k < filtered->columns; k++){
-                    filtered->data[i][j][k] = (*input_matrix)->data[slices[i]][j][k];
-                }
-            }
-        }
-
-        free(slices);
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return filtered;
-    }
-    if(iterate_mode == CUSTOM){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int* sizes = va_arg(info, int*);
-        int* rows = va_arg(info, int*);
-        int* columns = va_arg(info, int*);
-        int* slices = va_arg(info, int*);
-        va_end(info);
-
-        if(extract_mode == KEEP_COLUMNS_SIZE){
-            MATRIX *filtered = matrix_init(sizes[0], (*input_matrix)->columns, sizes[2], NOT_FILLED);
-            for(uint32_t i = 0; i < sizes[2]; i++){
-                for(uint32_t j = 0; j < sizes[0]; j++){
-                    for(uint32_t k = 0; k < sizes[1]; k++){
-                        filtered->data[i][j][columns[k]] = (*input_matrix)->data[slices[i]][rows[j]][columns[k]];
-                    }
-                }
-            }
-
-            free(slices);
-            free(rows);
-            free(columns);
-            if(return_mode == INPLACE) matrix_free(*input_matrix);
-            return filtered;
-        }
-        if(extract_mode == CUT){
-            MATRIX *filtered = matrix_init(sizes[0], sizes[1], sizes[2], NOT_FILLED);
-            for(uint32_t i = 0; i < sizes[2]; i++){
-                for(uint32_t j = 0; j < sizes[0]; j++){
-                    for(uint32_t k = 0; k < sizes[1]; k++){
-                        filtered->data[i][j][k] = (*input_matrix)->data[slices[i]][rows[j]][columns[k]];
-                    }
-                }
-            }
-
-            free(slices);
-            free(rows);
-            free(columns);
-            if(return_mode == INPLACE) matrix_free(*input_matrix);
-            return filtered;
-        }
-
-
+void matrix_transpose(const MATRIX_t* src, MATRIX_t** dest, enum AXIS axis){
+    
+    if(src == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_transpose\n\tparameter: src\n\tmessage: SRC CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
     }
 
-    return NULL;
-}
-
-MATRIX* matrix_add(MATRIX** a, const MATRIX b, int8_t return_mode, uint8_t iterate_mode, ...){
-
-    MATRIX *sum = matrix_init((*a)->rows, (*a)->columns, (*a)->slices, NOT_FILLED);
-
-    if(iterate_mode == ALL){
-        for(uint32_t i = 0; i < (*a)->slices; i++){
-            for(uint32_t j = 0; j < (*a)->rows; j++){
-                for(uint32_t k = 0; k < (*a)->columns; k++){
-                    sum->data[i][j][k] = (*a)->data[i][j][k] + b.data[i][j][k];
-                }
-            }
-        }
-    }
-    if(iterate_mode == BY_ROW){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int* sizes = va_arg(info, int*);
-        int* rows = va_arg(info, int*);
-
-        if(sizes[0] == -1){
-            va_end(info);
-            for(uint32_t i = 0; i < sum->slices; i++){
-                for(uint32_t j = 0; j < sizes[1]; j++){
-                    for(uint32_t k = 0; k < sum->columns; k++){
-                        sum->data[i][rows[j]][k] = (*a)->data[i][rows[j]][k] + b.data[i][rows[j]][k];
-                    }
-                }
-            }
-            free(rows);
-        }
-        else{
-            int* slices = va_arg(info, int*);
-            va_end(info);
-            for(uint32_t i = 0; i < sizes[0]; i++){
-                for(uint32_t j = 0; j < sizes[1]; j++){
-                    for(uint32_t k = 0; k < sum->columns; k++){
-                        sum->data[slices[i]][rows[j]][k] = (*a)->data[slices[i]][rows[j]][k] + b.data[slices[i]][rows[j]][k];
-                        //printf("slice: %d linha: %d coluna: %d -> %f\n", slices[i], rows[j], k, (*a)->data[slices[i]][rows[j]][k]);
-                    }
-                }
-            }
-            free(rows);
-            free(slices);
-        }
-    }
-    if(iterate_mode == BY_COLUMN){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int* sizes = va_arg(info, int*);
-        int* columns = va_arg(info, int*);
-
-        if(sizes[0] == -1){
-            va_end(info);
-            for(uint32_t i = 0; i < sum->slices; i++){
-                for(uint32_t j = 0; j < sum->rows; j++){
-                    for(uint32_t k = 0; k < sizes[1]; k++){
-                        sum->data[i][j][columns[k]] = (*a)->data[i][j][columns[k]] + b.data[i][j][columns[k]];
-                    }
-                }
-            }
-            free(columns);
-        }
-        else{
-            int* slices = va_arg(info, int*);
-            va_end(info);
-            for(uint32_t i = 0; i < sizes[0]; i++){
-                for(uint32_t j = 0; j < sum->rows; j++){
-                    for(uint32_t k = 0; k < sizes[1]; k++){
-                        sum->data[slices[i]][j][columns[k]] = (*a)->data[slices[i]][j][columns[k]] + b.data[slices[i]][j][columns[k]];
-                    }
-                }
-            }
-            free(columns);
-            free(slices);
-        }
-    }
-    if(iterate_mode == CUSTOM){
-        va_list info;
-        va_start(info, iterate_mode);
+    if(axis == Y){
+        if(src->columns != src->layers) matrix_init(dest, src->rows, src->layers, src->columns);
+        else matrix_init(dest, src->rows, src->columns, src->layers);
         
-        int* sizes = va_arg(info, int*);
-        int* rows = va_arg(info, int*);
-        int* columns = va_arg(info, int*);
-        int* slices = va_arg(info, int*);
-        va_end(info);
-
-        //printf("slice : %d linha: %d coluna: %d\n", sizes[0], sizes[1], sizes[2]);
-        for(uint32_t i = 0; i < sizes[0]; i++){
-            for(uint32_t j = 0; j < sizes[1]; j++){
-                for(uint32_t k = 0; k < sizes[2]; k++){
-                    sum->data[slices[i]][rows[j]][columns[k]] = (*a)->data[slices[i]][rows[j]][columns[k]] + b.data[slices[i]][rows[j]][columns[k]];
-                    //printf("slice : %d linha: %d coluna: %d %d valor: %f \n",slices[i], rows[j], columns[k] ,k,sum->data[slices[i]][rows[j]][columns[k]]);
+        for(uint32_t i = 0; i < src->layers; i++){
+            for(uint32_t j = 0; j < src->rows; j++){
+                for(uint32_t k = 0; k < src->columns; k++){
+                    (*dest)->data[k][j][i] = src->data[i][j][k];
                 }
             }
         }
-        free(slices);
-        free(sizes);
-        free(rows);
-        free(columns);
-    }
-    //else{
-    //    fprintf(stderr, "ITERATE MODE DOESN'T EXIST");
-    //    return NULL;
-    //}
-    if(return_mode == INPLACE) matrix_free(*a);
-    //printf("-->aqui\n");
-    //matrix_print(*sum);
-    return sum;
-}
-
-MATRIX* matrix_product(MATRIX** a, const MATRIX b, int8_t return_mode, uint8_t iterate_mode, ...){
-    if((*a)->columns != b.rows){
-        fprintf(stderr, "ERROR: MATRIX PRODUCT DIMENSIONS NOT MATCH");
-        return NULL;
-    }
-
-    if(iterate_mode == ALL){
-        if(b.slices != (*a)->slices){
-            fprintf(stderr, "ERROR: DIFFERENT NUMBER OF SLICES.");
-            return NULL;
-        }
-
-        MATRIX *product = matrix_init((*a)->rows, b.columns, b.slices, NOT_FILLED);
-        double *buffer = (double*)calloc((*a)->columns, sizeof(double));
-
-        for(uint32_t k = 0; k < b.slices; k++){
-            for(uint32_t i = 0; i < b.columns; i++){
-                for(uint32_t j = 0; j < b.rows; j++){
-                    buffer[j] = b.data[k][j][i];
-                }
-                for(uint32_t j = 0; j < (*a)->rows; j++){
-                    product->data[k][j][i] = array_dot(buffer, (*a)->data[k][j], (*a)->columns);
-                }
-            }
-        }
-        free(buffer);
-
-        if(return_mode == INPLACE) matrix_free(*a);
-        return product;
-    }
-    if(iterate_mode == CUSTOM){
-        if(b.slices != (*a)->slices){
-            fprintf(stderr, "ERROR: DIFFERENT NUMBER OF SLICES.");
-            return NULL;
-        }
-
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int slice_count = va_arg(info, int);
-        int* a_slices = va_arg(info, int*);
-        int* b_slices = va_arg(info, int*);
-        va_end(info);
-
-        MATRIX *product = matrix_init((*a)->rows, b.columns, slice_count, NOT_FILLED);
-        double *buffer = (double*)calloc((*a)->columns, sizeof(double));
-
-        for(uint32_t k = 0; k < slice_count; k++){
-            for(uint32_t i = 0; i < b.columns; i++){
-                for(uint32_t j = 0; j < b.rows; j++){
-                    buffer[j] = b.data[b_slices[k]][j][i];
-                }
-                for(uint32_t j = 0; j < (*a)->rows; j++){
-                    product->data[k][j][i] = array_dot(buffer, (*a)->data[a_slices[k]][j], (*a)->columns);
-                }
-            }
-        }
-        free(buffer);
-
-        if(return_mode == INPLACE) matrix_free(*a);
-        return product;
-    }
-
-    fprintf(stderr, "ERROR: ITERATE MODE DOESN'T EXIST.");
-    return NULL;
-}
-
-MATRIX* matrix_sum(MATRIX** input_matrix, int8_t iterate_mode, int8_t return_mode){
-    
-    if(iterate_mode == ALL){
-        MATRIX* sum = matrix_init(1,1,1, NOT_FILLED);
-
-        for(uint32_t i = 0; i < (*input_matrix)->slices; i++){
-            for(uint32_t j = 0; j < (*input_matrix)->rows; j++){
-                for(uint32_t k = 0; k < (*input_matrix)->columns; k++){
-                    sum->data[0][0][0] += (*input_matrix)->data[i][j][k];
-                }
-            }
-        }
-
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-
-        return sum;
-    }
-    if(iterate_mode == BY_COLUMN){
-        MATRIX* sum = matrix_init(1,(*input_matrix)->columns,(*input_matrix)->slices, NOT_FILLED);
-
-        for(uint32_t i = 0; i < (*input_matrix)->slices; i++){
-            for(uint32_t j = 0; j < (*input_matrix)->columns; j++){
-                for(uint32_t k = 0; k < (*input_matrix)->rows; k++){
-                    sum->data[i][0][j] += (*input_matrix)->data[i][k][j];
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return sum;
-    }
-    if(iterate_mode == BY_ROW){
-        MATRIX* sum = matrix_init((*input_matrix)->rows,1,(*input_matrix)->slices, NOT_FILLED);
-
-        for(uint32_t i = 0; i < (*input_matrix)->slices; i++){
-            for(uint32_t j = 0; j < (*input_matrix)->rows; j++){
-                for(uint32_t k = 0; k < (*input_matrix)->columns; k++){
-                    sum->data[i][j][0] += (*input_matrix)->data[i][j][k];
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        return sum;
-    }
-    if(iterate_mode == BY_SLICE){
-        MATRIX* sum = matrix_init((*input_matrix)->rows,(*input_matrix)->columns,1, NOT_FILLED);
-
-        for(uint32_t i = 0; i < (*input_matrix)->rows; i++){
-            for(uint32_t j = 0; j < (*input_matrix)->columns; j++){
-                for(uint32_t k = 0; k < (*input_matrix)->slices; k++){
-                    sum->data[0][i][j] += (*input_matrix)->data[k][i][j];
-                    //printf("slice : %d linha: %d coluna: %d %d valor: %f\n",i,j,k ,sum->data[0][i][j]);
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*input_matrix);
-        //matrix_info(*sum);
-        //matrix_print(*sum);
-        return sum;
-    }
-    
-    fprintf(stderr, "ITERATE MODE DOESN'T EXIST\n");
-    return NULL;
-
-}
-
-MATRIX* matrix_1by1(MATRIX** a, const MATRIX b, uint8_t operation, int return_mode){
-    if(((*a)->rows != b.rows) || ((*a)->columns != b.columns) || ((*a)->slices) != b.slices){
-        fprintf(stderr, "MATRIX 1 BY 1 OPERATION ERROR: DIMENSIONS NOT MATCH\n");
-        return NULL;
-    };
-    
-    MATRIX* operand = matrix_init((*a)->rows, (*a)->columns, (*a)->slices, NOT_FILLED);
-
-    if(operation == SUM){
-        for(uint32_t i = 0; i < operand->slices; i++){
-            for(uint32_t j = 0; j < operand->rows; j++){
-                for(uint32_t k = 0; k < operand->columns; k++){
-                    operand->data[i][j][k] = (*a)->data[i][j][k] + b.data[i][j][k];
-                }
-            }
-        }
-
-        if(return_mode == INPLACE) matrix_free(*a);
-        return operand;
-    }
-    if(operation == SUB){
-        for(uint32_t i = 0; i < operand->slices; i++){
-            for(uint32_t j = 0; j < operand->rows; j++){
-                for(uint32_t k = 0; k < operand->columns; k++){
-                    operand->data[i][j][k] = (*a)->data[i][j][k] - b.data[i][j][k];
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*a);
-        return operand;
-    }
-    if(operation == MULT){
-        for(uint32_t i = 0; i < operand->slices; i++){
-            for(uint32_t j = 0; j < operand->rows; j++){
-                for(uint32_t k = 0; k < operand->columns; k++){
-                    operand->data[i][j][k] = (*a)->data[i][j][k] * b.data[i][j][k];
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*a);
-    }
-    if(operation == DIVIDE){
-        for(uint32_t i = 0; i < operand->slices; i++){
-            for(uint32_t j = 0; j < operand->rows; j++){
-                for(uint32_t k = 0; k < operand->columns; k++){
-                    if(b.data[i][j][k] != 0) operand->data[i][j][k] = (*a)->data[i][j][k] / b.data[i][j][k];
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*a);
-    }
-    if(operation == POWER){
-        for(uint32_t i = 0; i < operand->slices; i++){
-            for(uint32_t j = 0; j < operand->rows; j++){
-                for(uint32_t k = 0; k < operand->columns; k++){
-                    operand->data[i][j][k] = pow((*a)->data[i][j][k], b.data[i][j][k]);
-                }
-            }
-        }
-        if(return_mode == INPLACE) matrix_free(*a);
-    }
-
-    return operand;
-}
-
-MATRIX* matrix_iterate(MATRIX** input_matrix, double (*action)(double, double), double y, int8_t return_mode, uint8_t iterate_mode, ...){
-
-    MATRIX *output = matrix_copy(*(*input_matrix));
-
-    if(iterate_mode == ALL){
-        for(uint32_t i = 0; i < output->slices; i++){
-            for(uint32_t j = 0; j < output->rows; j++){
-                for(uint32_t k = 0; k < output->columns; k++){
-                    output->data[i][j][k] = action((*input_matrix)->data[i][j][k], y);
-                }
-            }
-        }
-    }
-    if(iterate_mode == BY_ROW){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int* sizes = va_arg(info, int*);
-        int* rows = va_arg(info, int*);
-        int* slices = va_arg(info, int*);
-
-        va_end(info);
-
-        if(sizes[0] == -1){
-            for(uint32_t i = 0; i < output->slices; i++){
-                for(uint32_t j = 0; j < sizes[1]; j++){
-                    for(uint32_t k = 0; k < output->columns; k++){
-                        output->data[i][rows[j]][k] = action((*input_matrix)->data[i][rows[j]][k], y);
-                    }
-                }
-            }
-        }
-        else{
-            for(uint32_t i = 0; i < sizes[0]; i++){
-                for(uint32_t j = 0; j < sizes[1]; j++){
-                    for(uint32_t k = 0; k < output->columns; k++){
-                        output->data[slices[i]][rows[j]][k] = action((*input_matrix)->data[slices[i]][rows[j]][k], y);
-                    }
-                }
-            }
-        }
-
-        free(sizes);
-        free(slices);
-        free(rows);
-        free(action);
-
-    }
-    if(iterate_mode == BY_COLUMN){
-        va_list info;
-        va_start(info, iterate_mode);
-
-        int* sizes = va_arg(info, int*);
-        int* columns = va_arg(info,int*);
-
-        if(sizes[0] == -1){
-            va_end(info);
-            for(uint32_t i = 0; i < output->slices; i++){
-                for(uint32_t j = 0; j < output->rows; j++){
-                    for(uint32_t k = 0; k < sizes[1]; k++){
-                        output->data[i][j][columns[k]] = action((*input_matrix)->data[i][j][columns[k]], y);
-                    }
-                }
-            }
-        }
-        else{
-            int* slices = va_arg(info, int*);
-            va_end(info);
-            
-            for(uint32_t i = 0; i < sizes[0]; i++){
-                for(uint32_t j = 0; j < output->rows; j++){
-                    for(uint32_t k = 0; k < sizes[1]; k++){
-                        output->data[slices[i]][j][columns[k]] = action((*input_matrix)->data[slices[i]][j][columns[k]], y);
-                    }
-                }
-            }
-            free(slices);
-        }
-
-        free(sizes);
-        free(columns);
-    }
-    if(iterate_mode == CUSTOM){
-        va_list info;
-        va_start(info, iterate_mode);
+    }else if(axis == X){
+        if(src->rows != src->layers) matrix_init(dest, src->layers, src->columns, src->rows);
+        else matrix_init(dest, src->rows, src->columns, src->layers);
         
-        int* sizes = va_arg(info, int*);
-        int* rows = va_arg(info, int*);
-        int* columns = va_arg(info, int*);
-
-        //printf("slice : %d linha: %d coluna: %d\n", sizes[0], sizes[1], sizes[2]);
+        for(uint32_t i = 0; i < src->layers; i++){
+            for(uint32_t j = 0; j < src->rows; j++){
+                for(uint32_t k = 0; k < src->columns; k++){
+                    (*dest)->data[j][i][k] = src->data[i][j][k];
+                }
+            }
+        }
+    }else if(axis == Z){
+        if(src->rows != src->columns) matrix_init(dest, src->columns, src->rows, src->layers);
+        else matrix_init(dest, src->rows, src->columns, src->layers);
         
-        if(sizes[0] == -1){
-            //va_end(info);
-            for(uint32_t i = 0; i < output->slices; i++){
-                for(uint32_t j = 0; j < sizes[1]; j++){
-                    for(uint32_t k = 0; k < sizes[2]; k++){
-                        output->data[i][rows[j]][columns[k]] = action((*input_matrix)->data[i][rows[j]][columns[k]], y);
-                    }
+        for(uint32_t i = 0; i < src->layers; i++){
+            for(uint32_t j = 0; j < src->rows; j++){
+                for(uint32_t k = 0; k < src->columns; k++){
+                    (*dest)->data[i][k][j] = src->data[i][j][k];
                 }
             }
-            free(rows);
-            free(columns);
         }
-        else{
-            int* slices = va_arg(info, int*);
-            va_end(info);
-            for(uint32_t i = 0; i < sizes[0]; i++){
-                for(uint32_t j = 0; j < sizes[1]; j++){
-                    for(uint32_t k = 0; k < sizes[2]; k++){
-                        output->data[slices[i]][rows[j]][columns[k]] =  action((*input_matrix)->data[slices[i]][rows[j]][columns[k]], y);
-                        //printf("slice : %d linha: %d coluna: %d %d valor: %f \n",slices[i], rows[j], columns[k] ,k,output->data[slices[i]][rows[j]][columns[k]]);
-                    }
-                }
-            }
-            free(slices);
-        }
-        free(sizes);
-        free(rows);
-        free(columns);
     }
-    //else{
-    //    fprintf(stderr, "ITERATE MODE DOESN'T EXIST");
-    //    return NULL;
-    //}
 
-    if(return_mode == INPLACE) free(*input_matrix);
-
-    return output;
 }
 
-MATRIX* array_to_matrix(uint32_t input_rows, uint32_t input_columns, uint32_t input_slices, ...){
-    if(input_rows == 0 || input_columns == 0){
-        fprintf(stderr, "\nERROR: DIMENSION 0 ARRAY IS NOT ALLOWED.\n");
-        return NULL;
+void matrix_func(const MATRIX_t* src, MATRIX_t** dest, double func(double), const char* layer_fmt, const char* row_fmt, const char* column_fmt, bool same_shape){
+    if(src == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_func\n\tparameter: src\n\tmessage: SRC CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
     }
 
-    MATRIX* matrix;
-    va_list array;
-    va_start(array, input_slices);
-
-    if(input_slices == 1 && input_rows == 1 && input_columns >= 1) matrix = matrix_init(1, input_columns, 1, FILLED, va_arg(array, double*));
-    if(input_slices == 1 && input_rows > 1 && input_columns >= 1){
-        matrix = matrix_init(input_rows, input_columns, 1, NOT_FILLED);
-        double** arr = va_arg(array, double**);
-        
-        for(uint32_t i = 0; i < input_slices; i++){
-            for(uint32_t j = 0; j < input_rows; j++){
-                for(uint32_t k = 0; k < input_columns; k++){
-                    matrix->data[i][j][k] = arr[j][k];
-                }
-            }
-        }
-    }
-    if(input_slices > 1 && input_rows >= 1 && input_columns >= 1){
-        matrix = matrix_init(input_rows, input_columns, input_slices, NOT_FILLED);
-        double*** arr = va_arg(array, double***);
-
-        for(uint32_t i = 0; i < input_slices; i++){
-            for(uint32_t j = 0; j < input_rows; j++){
-                for(uint32_t k = 0; k < input_columns; k++){
-                    matrix->data[i][j][k] = arr[i][j][k];
-                }
-            }
-        }
-    }
-
-    va_end(array);
-
-    return matrix;
-}
-
-double*** matrix_to_array(MATRIX** a, uint8_t erase){
-    double*** arr = (double***)calloc((uint32_t)(*a)->slices, sizeof(double**));
+    slice_t *l_slice, *r_slice, *c_slice;
     
-    for(uint32_t i = 0; i < (uint32_t)(*a)->slices; i++){
-        arr[0] = (double**)calloc((uint32_t)(*a)->rows, sizeof(double*));
+    if(layer_fmt == NULL){
+        l_slice->start = 0;
+        l_slice->end = (*dest)->layers;
+        l_slice->step = 1;
+    }else l_slice = fmt_read(layer_fmt);
 
-        for(uint32_t j = 0; j < (uint32_t)(*a)->rows; j++){
-            arr[i][j] = (double*)calloc((uint32_t)(*a)->columns, sizeof(double));
+    if(fmt_verify("matrix_fill", (*dest)->layers, l_slice, "LAYER")){
+        free(l_slice);  
+        free(r_slice);  
+        free(c_slice); 
+        exit(LENGTH_MISSMATCH);
+    }
 
-            for(uint32_t k = 0; k < (uint32_t)(*a)->columns; k++){
-                arr[i][j][k] = (*a)->data[i][j][k];
+    if(row_fmt == NULL){
+        r_slice->start = 0;
+        r_slice->end = (*dest)->rows;
+        r_slice->step = 1;
+    }else r_slice = fmt_read(row_fmt);
+
+    if(fmt_verify("matrix_fill", (*dest)->rows, r_slice, "ROW")){
+        free(l_slice);  
+        free(r_slice);  
+        free(c_slice); 
+        exit(LENGTH_MISSMATCH);
+    }
+
+    if(column_fmt == NULL){
+        c_slice->start = 0;
+        c_slice->end = (*dest)->columns;
+        c_slice->step = 1;
+    }else c_slice = fmt_read(column_fmt);
+
+    if(same_shape){
+        if(dest == NULL || (*dest) == NULL) matrix_init(dest, src->rows, src->columns, src->layers);
+
+        for(uint32_t i = l_slice->start; i < l_slice->end; i += l_slice->step){
+            for(uint32_t j = r_slice->start; j < r_slice->end; j += r_slice->step){
+                for(uint32_t k = c_slice->start; k < c_slice->end; k += c_slice->step){
+                    (*dest)->data[i][j][k] = func(src->data[i][j][k]);
+                }
+            }
+        }
+    }else{
+        if(dest == NULL || (*dest) == NULL){
+            matrix_init(dest, ((r_slice->end - r_slice->start - 1)/r_slice->step)+1, ((c_slice->end - c_slice->start - 1)/c_slice->step)+1, ((l_slice->end - l_slice->start - 1)/l_slice->step)+1);
+        }
+
+        for(uint32_t i = l_slice->start, i2 = 0; i < l_slice->end; i += l_slice->step, i2++){
+            for(uint32_t j = r_slice->start, j2 = 0; j < r_slice->end; j += r_slice->step, j2++){
+                for(uint32_t k = c_slice->start, k2 = 0; k < c_slice->end; k += c_slice->step, k2++){
+                    (*dest)->data[i2][j2][k2] = func(src->data[i][j][k]);
+                }
             }
         }
     }
 
-    if(erase) matrix_free(*a);
+    free(l_slice);  
+    free(r_slice);  
+    free(c_slice);
+}
 
-    return arr;
+int8_t matrix_compare(const void* a, const void* b){
+    if(a == NULL || b == NULL){
+        fprintf(stderr, "ERROR:\n\tfunction: matrix_compare\n\tparameter: a || b\n\tmessage: a || b CAN'T BE NULL\n");
+        exit(NULL_ARRAY);
+    }
+
+    MATRIX_t *x = (MATRIX_t*)a, *y = (MATRIX_t*)b;
+
+    if(x->layers != y->layers || x->rows != y->rows || x->columns != y->columns) return -1;
+    for(uint32_t i = 0; i < x->layers; i++){
+        for(uint32_t j = 0; j < x->rows; j++){
+            for(uint32_t k = 0; k < x->columns; k++){
+                if(x->data[i][j][k] != y->data[i][j][k]) return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+void matrix_sort(const MATRIX_t* src, MATRIX_t** dest){
+    MATRIX_t *tmp;
+    double *dtmp = (double*)calloc(src->layers*src->rows*src->columns, sizeof(double));
+    
+    matrix_reshape(src, &tmp, 1, src->layers*src->rows*src->columns, 1, 1);
+
+    for(uint64_t i = 0; i < src->layers*src->rows*src->columns; i++) dtmp[i] = tmp->data[0][0][i];
+
+    qsort(dtmp, src->layers*src->rows*src->columns, sizeof(double), d_compare);
+   
+    for(uint64_t i = 0; i < src->layers*src->rows*src->columns; i++) tmp->data[0][0][i] = dtmp[i];
+
+    matrix_reshape(tmp, dest, src->rows, src->columns, src->layers, 2);
+
+    free(tmp);
+    free(dtmp);
 }
 
 #endif //END OF C MATRIX HEADER
